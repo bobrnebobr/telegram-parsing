@@ -25,7 +25,7 @@ class ChannelExporter:
             root = os.path.join(OUTPUT_DIR, channel_name)
             make_dir(root)
 
-            async for msg in self.client.iter_messages(entity, reverse=True):
+            async for msg in self.client.iter_messages(entity):
                 if not msg.date:
                     continue
 
