@@ -5,3 +5,4 @@ pyasn1==0.6.2
 python-dotenv==1.2.1
 rsa==4.9.1
 Telethon==1.42.0
+python-magic==0.4.27
