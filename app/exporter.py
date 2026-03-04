@@ -1,9 +1,15 @@
 import os
+import asyncio
 import hashlib
 from datetime import datetime
 from pathlib import Path
 
 from telethon import TelegramClient
+from telethon.errors import (
+    FileReferenceExpiredError,
+    FloodWaitError,
+    RPCError
+)
 from openpyxl import Workbook
 import magic
 
@@ -32,40 +38,68 @@ def make_dir(path):
 
 def detect_file_type(file_path: Path):
     ext = file_path.suffix.lower()
-
     try:
         mime = magic.from_file(str(file_path), mime=True)
     except Exception:
         mime = None
 
-    # Фото
     if mime and mime.startswith("image/"):
         return "Фотодокумент", mime
-
-    # Видео
     elif mime and mime.startswith("video/"):
         return "Видеодокумент", mime
-
-    # Аудио
     elif mime and mime.startswith("audio/"):
         return "Аудиодокумент", mime
-
-    # Текстовые файлы
     elif ext == ".txt":
         return "", "text/plain"
-
-    # Всё остальное
     else:
         return "Иное", mime if mime else "application/octet-stream"
 
 
 class ChannelExporter:
-    def __init__(self):
-        self.client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+
+    def __init__(self, max_parallel=4):
+        self.client = TelegramClient(
+            SESSION_NAME,
+            API_ID,
+            API_HASH,
+            request_retries=10,
+            connection_retries=10,
+            retry_delay=5,
+            timeout=120,
+            auto_reconnect=True
+        )
+
+        self.semaphore = asyncio.Semaphore(max_parallel)
         self.global_index = 0
         self.year_books = {}
         self.channel_root = None
         self.channel_name = None
+
+    # ---------------- SAFE DOWNLOAD ---------------- #
+
+    async def safe_download(self, message, path):
+        async with self.semaphore:
+            for attempt in range(3):
+                try:
+                    return await message.download_media(
+                        file=path,
+                    )
+
+                except FileReferenceExpiredError:
+                    message = await self.client.get_messages(
+                        message.chat_id,
+                        ids=message.id
+                    )
+
+                except FloodWaitError as e:
+                    await asyncio.sleep(e.seconds)
+
+                except RPCError:
+                    await asyncio.sleep(2)
+
+            return None
+
+    # ---------------- MAIN ---------------- #
 
     async def run(self):
         async with self.client:
@@ -79,6 +113,7 @@ class ChannelExporter:
             buffer = []
 
             async for msg in self.client.iter_messages(entity, reverse=True):
+
                 if not msg.date:
                     continue
 
@@ -101,17 +136,19 @@ class ChannelExporter:
                     current_group = None
 
                 await self.process_post([msg])
-                print(f"Пост {msg.id} сохранен")
 
             if buffer:
                 await self.process_post(buffer)
 
         self.save_all()
 
+    # ---------------- PROCESS POST ---------------- #
+
     async def process_post(self, messages):
+
         media_messages = [m for m in messages if m.media]
         if not media_messages:
-            return  # берём только посты с медиа
+            return
 
         main_msg = messages[0]
         post_id = main_msg.id
@@ -120,24 +157,30 @@ class ChannelExporter:
         year = post_date.strftime("%Y")
         month = post_date.strftime("%m")
 
-        post_path = os.path.join(self.channel_root, month, str(post_id))
+        post_path = os.path.join(
+            self.channel_root, year, month, str(post_id)
+        )
         make_dir(post_path)
 
-        # Текст поста
-        full_text = ""
-        for m in messages:
-            if m.text:
-                full_text += m.text + "\n\n"
-        full_text = full_text.strip()
+        full_text = "\n\n".join(
+            m.text for m in messages if m.text
+        ).strip()
 
-        # Скачиваем медиа
+        # ---------- ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА ---------- #
+
+        tasks = [
+            self.safe_download(m, post_path)
+            for m in media_messages
+        ]
+
+        results = await asyncio.gather(*tasks)
+
         saved_files = []
-        for m in media_messages:
-            saved = await m.download_media(file=post_path)
-            if isinstance(saved, list):
-                saved_files.extend(saved)
-            else:
-                saved_files.append(saved)
+        for r in results:
+            if isinstance(r, list):
+                saved_files.extend(r)
+            elif r:
+                saved_files.append(r)
 
         if not saved_files:
             return
@@ -146,7 +189,8 @@ class ChannelExporter:
         ws = self.get_year_sheet(year)
         file_number = 0
 
-        # 1️⃣ Медиа-файлы
+        # ---------- MEDIA ---------- #
+
         for file_path in saved_files:
             file_number += 1
             ws.append(self.build_row(
@@ -158,9 +202,9 @@ class ChannelExporter:
                 file_path=file_path
             ))
 
-        # 2️⃣ Текстовый файл
-        text_filename = f"{post_id}.txt"
-        text_path = os.path.join(post_path, text_filename)
+        # ---------- TEXT ---------- #
+
+        text_path = os.path.join(post_path, f"{post_id}.txt")
 
         with open(text_path, "w", encoding="utf-8") as f:
             f.write(full_text)
@@ -174,31 +218,9 @@ class ChannelExporter:
             title=full_text,
             file_path=text_path
         ))
+        print(f"Пост {post_id} сохранен")
 
-    def build_row(self, ed_number, file_number, post_id, post_date,
-                  title, file_path):
-
-        stat = os.stat(file_path)
-        file_modified = datetime.fromtimestamp(stat.st_mtime)
-        doc_type, file_format = detect_file_type(Path(file_path))
-
-        # Относительный путь от папки канала
-        relative_path = "./" + str(os.path.relpath(file_path, self.channel_root))
-
-        return [
-            ed_number,
-            file_number,
-            post_id,  # регистрационный номер = id Telegram
-            post_date.strftime("%Y-%m-%d %H:%M:%S"),
-            doc_type,
-            title,
-            os.path.basename(file_path),
-            file_modified.strftime("%Y-%m-%d %H:%M:%S"),
-            stat.st_size,
-            file_format,
-            self.sha256(file_path),
-            relative_path
-        ]
+    # ---------------- EXCEL ---------------- #
 
     def get_year_sheet(self, year):
         if year not in self.year_books:
@@ -221,6 +243,34 @@ class ChannelExporter:
                 f"index_{year}.xlsx"
             )
             wb.save(save_path)
+
+    # ---------------- HELPERS ---------------- #
+
+    def build_row(self, ed_number, file_number, post_id,
+                  post_date, title, file_path):
+
+        stat = os.stat(file_path)
+        file_modified = datetime.fromtimestamp(stat.st_mtime)
+        doc_type, file_format = detect_file_type(Path(file_path))
+
+        relative_path = "./" + str(
+            os.path.relpath(file_path, self.channel_root)
+        )
+
+        return [
+            ed_number,
+            file_number,
+            post_id,
+            post_date.strftime("%Y-%m-%d %H:%M:%S"),
+            doc_type,
+            title,
+            os.path.basename(file_path),
+            file_modified.strftime("%Y-%m-%d %H:%M:%S"),
+            stat.st_size,
+            file_format,
+            self.sha256(file_path),
+            relative_path
+        ]
 
     @staticmethod
     def sha256(path):
