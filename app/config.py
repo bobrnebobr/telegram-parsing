@@ -8,3 +8,4 @@ API_HASH = os.getenv("API_HASH")
 CHANNEL_NAME = os.getenv("CHANNEL_NAME")
 OUTPUT_DIR="./output"
 SESSION_NAME=os.getenv("SESSION_NAME", "session")
+DB_PATH = "registry.db"

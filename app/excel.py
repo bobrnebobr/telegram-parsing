@@ -1,5 +1,5 @@
-import openpyxl
-from openpyxl.utils import get_column_letter
+from openpyxl import Workbook
+import os
 
 HEADERS = [
     "Порядковый номер ЭД в реестре",
@@ -16,20 +16,11 @@ HEADERS = [
     "Путь к файлу",
 ]
 
-
-def save_excel(path, rows):
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Реестр"
-
+def export_excel(rows, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("Реестр")
     ws.append(HEADERS)
-
-    for row in rows:
-        ws.append(row)
-
-    # автоширина
-    for i, col in enumerate(ws.columns, 1):
-        max_len = max(len(str(cell.value)) if cell.value else 0 for cell in col)
-        ws.column_dimensions[get_column_letter(i)].width = min(max_len + 2, 80)
-
+    for r in rows:
+        ws.append(r)
     wb.save(path)
