@@ -6,6 +6,7 @@ from pathlib import Path
 from telethon import TelegramClient
 from telethon.errors import FileReferenceExpiredError, FloodWaitError, RPCError
 import magic
+import socks
 
 from .config import API_ID, API_HASH, CHANNEL_NAME, OUTPUT_DIR, SESSION_NAME, DB_PATH
 from .db import RegistryDB
@@ -49,7 +50,15 @@ def detect_file_type(file_path: Path):
 class ChannelExporter:
 
     def __init__(self, max_parallel=4):
-        self.client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+        self.proxy = (
+            socks.SOCKS5,
+            os.getenv("PROXY_IP"),
+            1080,
+            True,              # авторизация
+            os.getenv("PROXY_USER"),
+            os.getenv("PROXY_PASSWORD")
+        )
+        self.client = TelegramClient(SESSION_NAME, API_ID, API_HASH, proxy=self.proxy)
         self.db = RegistryDB(DB_PATH)
         self.semaphore = asyncio.Semaphore(max_parallel)
         self.global_index = 0
