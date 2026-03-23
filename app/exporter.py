@@ -67,6 +67,23 @@ class ChannelExporter:
         self.current_year = None
         self.current_month = None
 
+    def get_last_post_id_from_files(self):
+        max_id = 0
+        if not os.path.exists(self.channel_root):
+            return None
+        for year in os.listdir(self.channel_root):
+            year_path = os.path.join(self.channel_root, year)
+            if not os.path.isdir(year_path):
+                continue
+            for month in os.listdir(year_path):
+                month_path = os.path.join(year_path, month)
+                if not os.path.isdir(month_path):
+                    continue
+                for post_id in os.listdir(month_path):
+                    if post_id.isdigit():
+                        max_id = max(max_id, int(post_id))
+        return max_id if max_id > 0 else None
+
     async def safe_download(self, message, path):
         async with self.semaphore:
             for attempt in range(3):
@@ -88,7 +105,12 @@ class ChannelExporter:
             make_dir(self.channel_root)
             current_group = None
             buffer = []
-            async for msg in self.client.iter_messages(entity, reverse=True):
+
+            last_post_id = self.get_last_post_id_from_files()
+            min_id = (last_post_id - 10) if last_post_id else 0
+            print(f"Resuming from post_id > {min_id}")
+
+            async for msg in self.client.iter_messages(entity, reverse=True, min_id=min_id):
                 if not msg.date:
                     continue
                 if msg.grouped_id:
@@ -120,6 +142,18 @@ class ChannelExporter:
         post_date = main_msg.date
         year = post_date.strftime("%Y")
         month = post_date.strftime("%m")
+
+        post_path = os.path.join(
+            self.channel_root,
+            post_date.strftime("%Y"),
+            post_date.strftime("%m"),
+            str(post_id)
+        )
+
+        if os.path.exists(post_path) and os.listdir(post_path):
+            print(f"[SKIP] Post {post_id} already exists")
+            return
+
         if self.current_year is None:
             self.current_year = year
             self.current_month = month
