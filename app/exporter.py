@@ -55,7 +55,7 @@ class ChannelExporter:
         self.proxy = (
             os.getenv("PROXY_HOST"),
             int(os.getenv("PROXY_PORT")),
-            binascii.unhexlify(os.getenv("PROXY_SECRET"))
+            os.getenv("PROXY_SECRET")
         )
         self.client = TelegramClient(
             SESSION_NAME,
