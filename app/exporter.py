@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from telethon import TelegramClient
 from telethon.errors import FileReferenceExpiredError, FloodWaitError, RPCError
+from telethon.network.connection.tcpmtproxy import ConnectionTcpMTProxyRandomizedIntermediate
 import magic
 import socks
 
@@ -51,14 +52,16 @@ class ChannelExporter:
 
     def __init__(self, max_parallel=4):
         self.proxy = (
-            socks.SOCKS5,
-            os.getenv("PROXY_IP"),
-            1080,
-            True,              # авторизация
-            os.getenv("PROXY_USER"),
-            os.getenv("PROXY_PASSWORD")
+            os.getenv("PROXY_HOST"),
+            int(os.getenv("PROXY_PORT")),
+            os.getenv("PROXY_SECRET")
         )
-        self.client = TelegramClient(SESSION_NAME, API_ID, API_HASH, proxy=self.proxy)
+        self.client = TelegramClient(
+            SESSION_NAME,
+            API_ID,
+            API_HASH,
+            connection=ConnectionTcpMTProxyRandomizedIntermediate,
+            proxy=self.proxy)
         self.db = RegistryDB(DB_PATH)
         self.semaphore = asyncio.Semaphore(max_parallel)
         self.global_index = 0
