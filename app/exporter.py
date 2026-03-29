@@ -8,6 +8,7 @@ from telethon.errors import FileReferenceExpiredError, FloodWaitError, RPCError
 from telethon.network.connection.tcpmtproxy import ConnectionTcpMTProxyRandomizedIntermediate
 import magic
 import socks
+import binascii
 
 from .config import API_ID, API_HASH, CHANNEL_NAME, OUTPUT_DIR, SESSION_NAME, DB_PATH
 from .db import RegistryDB
@@ -54,7 +55,7 @@ class ChannelExporter:
         self.proxy = (
             os.getenv("PROXY_HOST"),
             int(os.getenv("PROXY_PORT")),
-            os.getenv("PROXY_SECRET")
+            binascii.unhexlify(os.getenv("PROXY_SECRET"))
         )
         self.client = TelegramClient(
             SESSION_NAME,
